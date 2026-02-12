@@ -44,9 +44,9 @@ class DbService {
     this.config = config;
     this.fixedRows = fixedRows;
   }
-
+// function provided by the mysql Node.js package
   createConn(dbConfig) {
-    return mysql.createConnection(dbConfig);
+    return mysql.createConnection(dbConfig); // db config?
   }
 
   ensureDbAndTable(writerConn, cb) {
