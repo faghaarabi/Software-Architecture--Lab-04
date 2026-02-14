@@ -1,4 +1,6 @@
 // server2/server2.js
+//Fereshteh Aghaarabi - A01426237
+// AI asstance has been used in this lab
 "use strict";
 
 const http = require("http");
@@ -6,6 +8,8 @@ const { URL } = require("url");
 const mysql = require("mysql2");
 
 const CONFIG = {
+
+  // Render env variable \\ fallback
   port: Number(process.env.PORT || 3000),
   corsAllowedOrigin: process.env.CORS_ORIGIN || "*",
 
@@ -31,6 +35,8 @@ const CONFIG = {
   ssl: buildSslConfig(),
 };
 
+// Node.js server connects to the database using an encrypted connection.
+// CA certificate = trusted certificate file
 function buildSslConfig() {
   const ca = process.env.DB_SSL_CA;
   if (ca && ca.trim().length > 0) {
@@ -39,20 +45,18 @@ function buildSslConfig() {
   return { rejectUnauthorized: true };
 }
 
-// ---- Define fixed rows to insert on each insert request
 const FIXED_PATIENT_ROWS = [
   { name: "Alex", age: 22, city: "Vancouver" },
   { name: "Jack", age: 30, city: "Burnaby" },
   { name: "Rose", age: 28, city: "Richmond" },
 ];
 
-// ---- Provide database helpers for table creation, inserts, and selects
 class DbService {
   constructor(config, fixedRows) {
     this.config = config;
     this.fixedRows = fixedRows;
   }
-
+// Copy all the properties from dbConfig into this new object.
   createConn(dbConfig) {
     return mysql.createConnection({
       ...dbConfig,
@@ -126,7 +130,7 @@ class DbService {
   }
 }
 
-// ---- Provide HTTP helpers for CORS, JSON responses, and body reads
+//Provide HTTP helpers for CORS, JSON responses, and body reads
 class HttpUtil {
   constructor(corsAllowedOrigin) {
     this.corsAllowedOrigin = corsAllowedOrigin;
@@ -157,7 +161,7 @@ class HttpUtil {
   }
 }
 
-// ---- Run the HTTP server and route requests to handlers
+// Run the HTTP server and route requests to handlers
 class Server2App {
   constructor(config, fixedRows) {
     this.config = config;
@@ -320,12 +324,12 @@ class Server2App {
       return this.handleInsert(req, res);
     }
 
-    // ---- Prefer query-param route to reduce WAF blocking
+    // Prefer query-param route to reduce WAF blocking
     if (req.method === "GET" && pathname === "/lab5/api/v1/sql") {
       return this.handleSelectFromQueryParam(req, res, fullUrl);
     }
 
-    // ---- Keep path-encoded route to match assignment format
+    // Keep path-encoded route to match assignment format
     if (req.method === "GET" && pathname.startsWith("/lab5/api/v1/sql/")) {
       return this.handleSelectFromPath(req, res, pathname);
     }
