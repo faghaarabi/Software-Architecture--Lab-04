@@ -5,8 +5,7 @@ const http = require("http");
 const { URL } = require("url");
 const mysql = require("mysql2"); // <-- mysql2 (not mysql)
 
-// -------------------- CONFIG --------------------
-// Keep your endpoints the same; only DB config changes to env vars.
+
 const CONFIG = {
   port: Number(process.env.PORT || 3000),
   corsAllowedOrigin: process.env.CORS_ORIGIN || "*",
@@ -14,8 +13,7 @@ const CONFIG = {
   dbName: process.env.DB_NAME || "defaultdb",
   tableName: process.env.DB_TABLE || "patient",
 
-  // If you have separate users later, you can set WRITER/READER env vars.
-  // If not, it will fall back to DB_* for both.
+
   writer: {
     host: process.env.DB_WRITER_HOST || process.env.DB_HOST,
     port: Number(process.env.DB_WRITER_PORT || process.env.DB_PORT || 3306),
@@ -32,9 +30,7 @@ const CONFIG = {
     database: process.env.DB_READER_NAME || process.env.DB_NAME || "defaultdb",
   },
 
-  // Aiven requires SSL. Two modes:
-  // 1) Recommended: set DB_SSL_CA to Aiven CA cert (paste the PEM text).
-  // 2) Fallback: rely on system CA store (often works on Render).
+
   ssl: buildSslConfig(),
 };
 
@@ -43,7 +39,7 @@ function buildSslConfig() {
   if (ca && ca.trim().length > 0) {
     return { ca, rejectUnauthorized: true };
   }
-  // fallback: still use SSL, but without a pinned CA
+
   return { rejectUnauthorized: true };
 }
 
@@ -169,7 +165,7 @@ class HttpUtil {
   }
 }
 
-// -------------------- SERVER APP --------------------
+
 class Server2App {
   constructor(config, fixedRows) {
     this.config = config;
@@ -182,7 +178,7 @@ class Server2App {
   }
 
   start() {
-    // quick DB smoke test (helps a LOT on Render logs)
+
     this.dbSmokeTest();
 
     this.server.listen(this.config.port, () => {
@@ -196,12 +192,12 @@ class Server2App {
     const c = this.db.createConn(this.config.reader);
     c.connect((err) => {
       if (err) {
-        console.error("❌ DB connect failed:", err.message);
+        console.error("DB connect failed:", err.message);
         return;
       }
       c.query("SELECT 1", (e) => {
-        if (e) console.error("❌ DB test query failed:", e.message);
-        else console.log("✅ DB connected");
+        if (e) console.error("DB test query failed:", e.message);
+        else console.log("DB connected");
         c.end();
       });
     });
@@ -310,5 +306,5 @@ class Server2App {
   }
 }
 
-// -------------------- RUN --------------------
+
 new Server2App(CONFIG, FIXED_PATIENT_ROWS).start();
