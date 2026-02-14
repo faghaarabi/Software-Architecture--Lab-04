@@ -1,77 +1,94 @@
 // server2/server2.js
-// ChatGPT (https://chat.openai.com/) was used to help write and explain parts of this assignment.
-// Student must understand every line and takes full responsibility.
-
 "use strict";
 
 const http = require("http");
 const { URL } = require("url");
-const mysql = require("mysql");
+const mysql = require("mysql2"); // <-- mysql2 (not mysql)
 
-
+// -------------------- CONFIG --------------------
+// Keep your endpoints the same; only DB config changes to env vars.
 const CONFIG = {
-  port: 3000,
-  corsAllowedOrigin: "*",
+  port: Number(process.env.PORT || 3000),
+  corsAllowedOrigin: process.env.CORS_ORIGIN || "*",
 
-  dbName: "lab5db",
-  tableName: "patient",
+  dbName: process.env.DB_NAME || "defaultdb",
+  tableName: process.env.DB_TABLE || "patient",
 
+  // If you have separate users later, you can set WRITER/READER env vars.
+  // If not, it will fall back to DB_* for both.
   writer: {
-    host: "localhost",
-    port: 3306,
-    user: "lab5_writer",
-    password: "WriterPass123!",
-    database: "lab5db",
+    host: process.env.DB_WRITER_HOST || process.env.DB_HOST,
+    port: Number(process.env.DB_WRITER_PORT || process.env.DB_PORT || 3306),
+    user: process.env.DB_WRITER_USER || process.env.DB_USER,
+    password: process.env.DB_WRITER_PASSWORD || process.env.DB_PASSWORD,
+    database: process.env.DB_WRITER_NAME || process.env.DB_NAME || "defaultdb",
   },
 
   reader: {
-    host: "localhost",
-    port: 3306,
-    user: "lab5_reader",
-    password: "ReaderPass123!",
-    database: "lab5db",
+    host: process.env.DB_READER_HOST || process.env.DB_HOST,
+    port: Number(process.env.DB_READER_PORT || process.env.DB_PORT || 3306),
+    user: process.env.DB_READER_USER || process.env.DB_USER,
+    password: process.env.DB_READER_PASSWORD || process.env.DB_PASSWORD,
+    database: process.env.DB_READER_NAME || process.env.DB_NAME || "defaultdb",
   },
+
+  // Aiven requires SSL. Two modes:
+  // 1) Recommended: set DB_SSL_CA to Aiven CA cert (paste the PEM text).
+  // 2) Fallback: rely on system CA store (often works on Render).
+  ssl: buildSslConfig(),
 };
 
+function buildSslConfig() {
+  const ca = process.env.DB_SSL_CA;
+  if (ca && ca.trim().length > 0) {
+    return { ca, rejectUnauthorized: true };
+  }
+  // fallback: still use SSL, but without a pinned CA
+  return { rejectUnauthorized: true };
+}
+
+// -------------------- DATA --------------------
 const FIXED_PATIENT_ROWS = [
   { name: "Alex", age: 22, city: "Vancouver" },
   { name: "Jack", age: 30, city: "Burnaby" },
   { name: "Rose", age: 28, city: "Richmond" },
 ];
 
+// -------------------- DB SERVICE --------------------
 class DbService {
   constructor(config, fixedRows) {
     this.config = config;
     this.fixedRows = fixedRows;
   }
-// function provided by the mysql Node.js package
+
   createConn(dbConfig) {
-    return mysql.createConnection(dbConfig); // db config?
+    // mysql2 supports SSL config on connect
+    return mysql.createConnection({
+      ...dbConfig,
+      ssl: this.config.ssl,
+    });
   }
 
   ensureDbAndTable(writerConn, cb) {
-    const createDbSql = `CREATE DATABASE IF NOT EXISTS \`${this.config.dbName}\`;`;
+    // NOTE: On managed DBs (Aiven), the DB usually already exists
+    // and you might not have permissions to CREATE DATABASE.
+    // So we only ensure the TABLE exists.
+    const useDbSql = `USE \`${this.config.dbName}\`;`;
 
-    writerConn.query(createDbSql, (err) => {
+    writerConn.query(useDbSql, (err) => {
       if (err) return cb(err);
 
-      writerConn.query(`USE \`${this.config.dbName}\`;`, (err2) => {
-        if (err2) return cb(err2);
+      const createTableSql = `
+        CREATE TABLE IF NOT EXISTS \`${this.config.tableName}\` (
+          patientID INT NOT NULL AUTO_INCREMENT,
+          name VARCHAR(100) NOT NULL,
+          age INT NOT NULL,
+          city VARCHAR(100) NOT NULL,
+          PRIMARY KEY (patientID)
+        ) ENGINE=InnoDB;
+      `;
 
-        // ENGINE=InnoDB
-      
-        const createTableSql = `
-          CREATE TABLE IF NOT EXISTS \`${this.config.tableName}\` (
-            patientID INT NOT NULL AUTO_INCREMENT,
-            name VARCHAR(100) NOT NULL,
-            age INT NOT NULL,
-            city VARCHAR(100) NOT NULL,
-            PRIMARY KEY (patientID)
-          ) ENGINE=InnoDB;
-        `;
-
-        writerConn.query(createTableSql, cb);
-      });
+      writerConn.query(createTableSql, cb);
     });
   }
 
@@ -79,9 +96,7 @@ class DbService {
     const writerConn = this.createConn(this.config.writer);
 
     writerConn.connect((err) => {
-      if (err) {
-        return cb(err);
-      }
+      if (err) return cb(err);
 
       this.ensureDbAndTable(writerConn, (err2) => {
         if (err2) {
@@ -107,15 +122,23 @@ class DbService {
     readerConn.connect((err) => {
       if (err) return cb(err);
 
-      readerConn.query(sql, (qErr, rows) => {
-        readerConn.end();
-        if (qErr) return cb(qErr);
-        return cb(null, rows);
+      readerConn.query(`USE \`${this.config.dbName}\`;`, (useErr) => {
+        if (useErr) {
+          readerConn.end();
+          return cb(useErr);
+        }
+
+        readerConn.query(sql, (qErr, rows) => {
+          readerConn.end();
+          if (qErr) return cb(qErr);
+          return cb(null, rows);
+        });
       });
     });
   }
 }
 
+// -------------------- HTTP UTIL --------------------
 class HttpUtil {
   constructor(corsAllowedOrigin) {
     this.corsAllowedOrigin = corsAllowedOrigin;
@@ -124,7 +147,10 @@ class HttpUtil {
   writeCorsHeaders(res) {
     res.setHeader("Access-Control-Allow-Origin", this.corsAllowedOrigin);
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    res.setHeader(
+      "Access-Control-Allow-Headers",
+      "Content-Type, ngrok-skip-browser-warning"
+    );
   }
 
   sendJson(res, statusCode, obj) {
@@ -143,19 +169,22 @@ class HttpUtil {
   }
 }
 
-
+// -------------------- SERVER APP --------------------
 class Server2App {
   constructor(config, fixedRows) {
     this.config = config;
     this.db = new DbService(config, fixedRows);
     this.httpUtil = new HttpUtil(config.corsAllowedOrigin);
 
-    this.server = http.createServer((req,res) => {
+    this.server = http.createServer((req, res) => {
       this.handleRequest(req, res);
     });
   }
 
   start() {
+    // quick DB smoke test (helps a LOT on Render logs)
+    this.dbSmokeTest();
+
     this.server.listen(this.config.port, () => {
       console.log(`Server2 running on http://localhost:${this.config.port}`);
       console.log("POST  /lab5/api/v1/insert");
@@ -163,25 +192,36 @@ class Server2App {
     });
   }
 
+  dbSmokeTest() {
+    const c = this.db.createConn(this.config.reader);
+    c.connect((err) => {
+      if (err) {
+        console.error("❌ DB connect failed:", err.message);
+        return;
+      }
+      c.query("SELECT 1", (e) => {
+        if (e) console.error("❌ DB test query failed:", e.message);
+        else console.log("✅ DB connected");
+        c.end();
+      });
+    });
+  }
+
   handlePreflight(req, res) {
-    res.statusCode = 204; // for OPTIONS 204 means success
+    res.statusCode = 204;
     this.httpUtil.writeCorsHeaders(res);
     res.end();
   }
 
   looksLikeSelectOnly(sql) {
-    // Optional extra safety check (REAL protection is DB privileges)
     const trimmed = sql.trim().toUpperCase();
     return trimmed.startsWith("SELECT ");
   }
 
   parseSqlFromPath(pathname) {
-    // pathname: /lab5/api/v1/sql/<encoded>
     const encoded = pathname.slice("/lab5/api/v1/sql/".length);
-
     let sql = decodeURIComponent(encoded).trim();
 
-    // allow SQL wrapped in quotes: "select ..." or 'select ...'
     if (
       (sql.startsWith('"') && sql.endsWith('"')) ||
       (sql.startsWith("'") && sql.endsWith("'"))
@@ -193,10 +233,12 @@ class Server2App {
   }
 
   handleInsert(req, res) {
-    // We read body (even if unused) to be safe with POST
     this.httpUtil.readBody(req, (bodyErr) => {
       if (bodyErr) {
-        return this.httpUtil.sendJson(res, 400, { ok: false, error: "Bad request body" });
+        return this.httpUtil.sendJson(res, 400, {
+          ok: false,
+          error: "Bad request body",
+        });
       }
 
       this.db.insertFixedRows((err, result) => {
@@ -222,11 +264,17 @@ class Server2App {
     try {
       sql = this.parseSqlFromPath(pathname);
     } catch (e) {
-      return this.httpUtil.sendJson(res, 400, { ok: false, error: "Bad URL encoding" });
+      return this.httpUtil.sendJson(res, 400, {
+        ok: false,
+        error: "Bad URL encoding",
+      });
     }
 
     if (!this.looksLikeSelectOnly(sql)) {
-      return this.httpUtil.sendJson(res, 400, { ok: false, error: "Only SELECT queries are allowed." });
+      return this.httpUtil.sendJson(res, 400, {
+        ok: false,
+        error: "Only SELECT queries are allowed.",
+      });
     }
 
     this.db.runSelect(sql, (err, rows) => {
@@ -243,7 +291,6 @@ class Server2App {
   }
 
   handleRequest(req, res) {
-    // CORS preflight
     if (req.method === "OPTIONS") {
       return this.handlePreflight(req, res);
     }
@@ -251,12 +298,10 @@ class Server2App {
     const fullUrl = new URL(req.url, `http://${req.headers.host}`);
     const pathname = fullUrl.pathname;
 
-    
     if (req.method === "POST" && pathname === "/lab5/api/v1/insert") {
       return this.handleInsert(req, res);
     }
 
-    // GET /lab5/api/v1/sql/<encoded SQL>
     if (req.method === "GET" && pathname.startsWith("/lab5/api/v1/sql/")) {
       return this.handleSelect(req, res, pathname);
     }
