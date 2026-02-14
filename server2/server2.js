@@ -3,8 +3,7 @@
 
 const http = require("http");
 const { URL } = require("url");
-const mysql = require("mysql2"); // <-- mysql2 (not mysql)
-
+const mysql = require("mysql2");
 
 const CONFIG = {
   port: Number(process.env.PORT || 3000),
@@ -12,7 +11,6 @@ const CONFIG = {
 
   dbName: process.env.DB_NAME || "defaultdb",
   tableName: process.env.DB_TABLE || "patient",
-
 
   writer: {
     host: process.env.DB_WRITER_HOST || process.env.DB_HOST,
@@ -30,7 +28,6 @@ const CONFIG = {
     database: process.env.DB_READER_NAME || process.env.DB_NAME || "defaultdb",
   },
 
-
   ssl: buildSslConfig(),
 };
 
@@ -39,18 +36,17 @@ function buildSslConfig() {
   if (ca && ca.trim().length > 0) {
     return { ca, rejectUnauthorized: true };
   }
-
   return { rejectUnauthorized: true };
 }
 
-// -------------------- DATA --------------------
+// ---- Define fixed rows to insert on each insert request
 const FIXED_PATIENT_ROWS = [
   { name: "Alex", age: 22, city: "Vancouver" },
   { name: "Jack", age: 30, city: "Burnaby" },
   { name: "Rose", age: 28, city: "Richmond" },
 ];
 
-// -------------------- DB SERVICE --------------------
+// ---- Provide database helpers for table creation, inserts, and selects
 class DbService {
   constructor(config, fixedRows) {
     this.config = config;
@@ -58,7 +54,6 @@ class DbService {
   }
 
   createConn(dbConfig) {
-    // mysql2 supports SSL config on connect
     return mysql.createConnection({
       ...dbConfig,
       ssl: this.config.ssl,
@@ -66,9 +61,6 @@ class DbService {
   }
 
   ensureDbAndTable(writerConn, cb) {
-    // NOTE: On managed DBs (Aiven), the DB usually already exists
-    // and you might not have permissions to CREATE DATABASE.
-    // So we only ensure the TABLE exists.
     const useDbSql = `USE \`${this.config.dbName}\`;`;
 
     writerConn.query(useDbSql, (err) => {
@@ -134,7 +126,7 @@ class DbService {
   }
 }
 
-// -------------------- HTTP UTIL --------------------
+// ---- Provide HTTP helpers for CORS, JSON responses, and body reads
 class HttpUtil {
   constructor(corsAllowedOrigin) {
     this.corsAllowedOrigin = corsAllowedOrigin;
@@ -165,7 +157,7 @@ class HttpUtil {
   }
 }
 
-
+// ---- Run the HTTP server and route requests to handlers
 class Server2App {
   constructor(config, fixedRows) {
     this.config = config;
@@ -178,13 +170,13 @@ class Server2App {
   }
 
   start() {
-
     this.dbSmokeTest();
 
     this.server.listen(this.config.port, () => {
       console.log(`Server2 running on http://localhost:${this.config.port}`);
       console.log("POST  /lab5/api/v1/insert");
       console.log('GET   /lab5/api/v1/sql/%22select%20*%20from%20patient%22');
+      console.log("GET   /lab5/api/v1/sql?query=select%20*%20from%20patient");
     });
   }
 
@@ -255,7 +247,7 @@ class Server2App {
     });
   }
 
-  handleSelect(req, res, pathname) {
+  handleSelectFromPath(req, res, pathname) {
     let sql = "";
     try {
       sql = this.parseSqlFromPath(pathname);
@@ -263,6 +255,36 @@ class Server2App {
       return this.httpUtil.sendJson(res, 400, {
         ok: false,
         error: "Bad URL encoding",
+      });
+    }
+
+    if (!this.looksLikeSelectOnly(sql)) {
+      return this.httpUtil.sendJson(res, 400, {
+        ok: false,
+        error: "Only SELECT queries are allowed.",
+      });
+    }
+
+    this.db.runSelect(sql, (err, rows) => {
+      if (err) {
+        return this.httpUtil.sendJson(res, 400, {
+          ok: false,
+          error: "Query failed",
+          detail: err.message,
+        });
+      }
+
+      return this.httpUtil.sendJson(res, 200, { ok: true, rows });
+    });
+  }
+
+  handleSelectFromQueryParam(req, res, fullUrl) {
+    const sql = (fullUrl.searchParams.get("query") || "").trim();
+
+    if (!sql) {
+      return this.httpUtil.sendJson(res, 400, {
+        ok: false,
+        error: "Missing query param. Use /lab5/api/v1/sql?query=SELECT...",
       });
     }
 
@@ -298,13 +320,18 @@ class Server2App {
       return this.handleInsert(req, res);
     }
 
+    // ---- Prefer query-param route to reduce WAF blocking
+    if (req.method === "GET" && pathname === "/lab5/api/v1/sql") {
+      return this.handleSelectFromQueryParam(req, res, fullUrl);
+    }
+
+    // ---- Keep path-encoded route to match assignment format
     if (req.method === "GET" && pathname.startsWith("/lab5/api/v1/sql/")) {
-      return this.handleSelect(req, res, pathname);
+      return this.handleSelectFromPath(req, res, pathname);
     }
 
     return this.httpUtil.sendJson(res, 404, { ok: false, error: "Not found" });
   }
 }
-
 
 new Server2App(CONFIG, FIXED_PATIENT_ROWS).start();
