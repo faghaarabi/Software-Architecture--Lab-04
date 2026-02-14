@@ -21,6 +21,7 @@ insertBtn.addEventListener("click", async () => {
 /* SELECT BUTTON (GET) */
 selectBtn.addEventListener("click", async () => {
     const query = sqlQuery.value.trim();
+
     if (!query) {
         resultArea.textContent = "Please enter a SELECT query.";
         return;
@@ -32,15 +33,13 @@ selectBtn.addEventListener("click", async () => {
         const encodedQuery = encodeURIComponent(query);
 
         const response = await fetch(
-            `${API_BASE_URL}/lab5/api/v1/sql?query=${encodedQuery}`,
-            {
-                method: "GET",
-                headers: { "Accept": "application/json" },
-            }
+            `${API_BASE_URL}/lab5/api/v1/sql/${encodedQuery}`,
+            { method: "GET" }
         );
 
         const data = await response.json();
         resultArea.textContent = JSON.stringify(data, null, 2);
+
     } catch (error) {
         resultArea.textContent = "Error: " + error.message;
     }
