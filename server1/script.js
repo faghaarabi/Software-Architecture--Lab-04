@@ -1,4 +1,10 @@
+const insertBtn = document.getElementById("insertBtn");
+const selectBtn = document.getElementById("selectBtn");
+const resultArea = document.getElementById("result");
+const sqlQuery = document.getElementById("sqlQuery");
+
 const API_BASE_URL = "https://software-architecture-lab-04-1.onrender.com";
+//const API_BASE_URL = "https://software-architecture-lab-04-1.onrender.com";
 
 /* INSERT BUTTON (POST) */
 insertBtn.addEventListener("click", async () => {
