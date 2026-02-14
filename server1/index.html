@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Lab 5 - Patient Database Client</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 40px;
+        }
+
+        textarea {
+            width: 100%;
+            max-width: 600px;
+        }
+
+        button {
+            padding: 8px 15px;
+            margin-top: 10px;
+            cursor: pointer;
+        }
+
+        #result {
+            background-color: #f4f4f4;
+            padding: 15px;
+            border-radius: 5px;
+            margin-top: 15px;
+            white-space: pre-wrap;
+        }
+    </style>
+</head>
+
+<body>
+
+    <h1>Patient Database (Server1 - Client)</h1>
+
+    <h3>Insert Patients</h3>
+    <button id="insertBtn">Insert Patients</button>
+
+    <hr>
+
+    <h3>Run SELECT Query</h3>
+
+    <textarea id="sqlQuery" rows="5" placeholder="Example: select * from patient">
+    </textarea>
+
+    <br>
+
+    <button id="selectBtn">Run Query</button>
+
+    <h3>Server Response:</h3>
+    <div id="result"></div>
+
+    <script src="script.js"></script>
+
+</body>
+
+</html>
