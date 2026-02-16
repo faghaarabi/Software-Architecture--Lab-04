@@ -1,18 +1,15 @@
+// server2/server2.js
+//Fereshteh Aghaarabi - A01426237
+// AI asstance has been used in this lab
 "use strict";
 
 const http = require("http");
 const { URL } = require("url");
 const mysql = require("mysql2");
 
-function buildSslConfig() {
-  const ca = process.env.DB_SSL_CA;
-  if (ca && ca.trim().length > 0) {
-    return { ca, rejectUnauthorized: true };
-  }
-  return { rejectUnauthorized: true };
-}
-
 const CONFIG = {
+
+  // Render env variable \\ fallback
   port: Number(process.env.PORT || 3000),
   corsAllowedOrigin: process.env.CORS_ORIGIN || "*",
 
@@ -38,6 +35,16 @@ const CONFIG = {
   ssl: buildSslConfig(),
 };
 
+// Node.js server connects to the database using an encrypted connection.
+// CA certificate = trusted certificate file
+function buildSslConfig() {
+  const ca = process.env.DB_SSL_CA;
+  if (ca && ca.trim().length > 0) {
+    return { ca, rejectUnauthorized: true };
+  }
+  return { rejectUnauthorized: true };
+}
+
 const FIXED_PATIENT_ROWS = [
   { name: "Alex", age: 22, city: "Vancouver" },
   { name: "Jack", age: 30, city: "Burnaby" },
@@ -49,7 +56,7 @@ class DbService {
     this.config = config;
     this.fixedRows = fixedRows;
   }
-
+// Copy all the properties from dbConfig into this new object.
   createConn(dbConfig) {
     return mysql.createConnection({
       ...dbConfig,
@@ -123,6 +130,7 @@ class DbService {
   }
 }
 
+//Provide HTTP helpers for CORS, JSON responses, and body reads
 class HttpUtil {
   constructor(corsAllowedOrigin) {
     this.corsAllowedOrigin = corsAllowedOrigin;
@@ -153,6 +161,7 @@ class HttpUtil {
   }
 }
 
+// Run the HTTP server and route requests to handlers
 class Server2App {
   constructor(config, fixedRows) {
     this.config = config;
@@ -170,11 +179,8 @@ class Server2App {
     this.server.listen(this.config.port, () => {
       console.log(`Server2 running on http://localhost:${this.config.port}`);
       console.log("POST  /lab5/api/v1/insert");
-      console.log("GET   /lab5/api/v1/sql?query=select%20*%20from%20patient");
-      console.log(
-        "GET   /lab5/api/v1/sqlb64/c2VsZWN0ICogZnJvbSBwYXRpZW50"
-      );
       console.log('GET   /lab5/api/v1/sql/%22select%20*%20from%20patient%22');
+      console.log("GET   /lab5/api/v1/sql?query=select%20*%20from%20patient");
     });
   }
 
@@ -218,14 +224,6 @@ class Server2App {
     return sql;
   }
 
-  parseSqlFromB64Path(pathname) {
-    const encoded = pathname.slice("/lab5/api/v1/sqlb64/".length).trim();
-    const b64 = encoded.replace(/-/g, "+").replace(/_/g, "/");
-    const padded = b64 + "===".slice((b64.length + 3) % 4);
-    const sql = Buffer.from(padded, "base64").toString("utf8").trim();
-    return sql;
-  }
-
   handleInsert(req, res) {
     this.httpUtil.readBody(req, (bodyErr) => {
       if (bodyErr) {
@@ -253,7 +251,17 @@ class Server2App {
     });
   }
 
-  handleSelectSql(req, res, sql) {
+  handleSelectFromPath(req, res, pathname) {
+    let sql = "";
+    try {
+      sql = this.parseSqlFromPath(pathname);
+    } catch (e) {
+      return this.httpUtil.sendJson(res, 400, {
+        ok: false,
+        error: "Bad URL encoding",
+      });
+    }
+
     if (!this.looksLikeSelectOnly(sql)) {
       return this.httpUtil.sendJson(res, 400, {
         ok: false,
@@ -274,34 +282,6 @@ class Server2App {
     });
   }
 
-  handleSelectFromPath(req, res, pathname) {
-    let sql = "";
-    try {
-      sql = this.parseSqlFromPath(pathname);
-    } catch {
-      return this.httpUtil.sendJson(res, 400, {
-        ok: false,
-        error: "Bad URL encoding",
-      });
-    }
-
-    return this.handleSelectSql(req, res, sql);
-  }
-
-  handleSelectFromB64Path(req, res, pathname) {
-    let sql = "";
-    try {
-      sql = this.parseSqlFromB64Path(pathname);
-    } catch {
-      return this.httpUtil.sendJson(res, 400, {
-        ok: false,
-        error: "Bad base64 encoding",
-      });
-    }
-
-    return this.handleSelectSql(req, res, sql);
-  }
-
   handleSelectFromQueryParam(req, res, fullUrl) {
     const sql = (fullUrl.searchParams.get("query") || "").trim();
 
@@ -312,7 +292,24 @@ class Server2App {
       });
     }
 
-    return this.handleSelectSql(req, res, sql);
+    if (!this.looksLikeSelectOnly(sql)) {
+      return this.httpUtil.sendJson(res, 400, {
+        ok: false,
+        error: "Only SELECT queries are allowed.",
+      });
+    }
+
+    this.db.runSelect(sql, (err, rows) => {
+      if (err) {
+        return this.httpUtil.sendJson(res, 400, {
+          ok: false,
+          error: "Query failed",
+          detail: err.message,
+        });
+      }
+
+      return this.httpUtil.sendJson(res, 200, { ok: true, rows });
+    });
   }
 
   handleRequest(req, res) {
@@ -327,14 +324,12 @@ class Server2App {
       return this.handleInsert(req, res);
     }
 
+    // Prefer query-param route to reduce WAF blocking
     if (req.method === "GET" && pathname === "/lab5/api/v1/sql") {
       return this.handleSelectFromQueryParam(req, res, fullUrl);
     }
 
-    if (req.method === "GET" && pathname.startsWith("/lab5/api/v1/sqlb64/")) {
-      return this.handleSelectFromB64Path(req, res, pathname);
-    }
-
+    // Keep path-encoded route to match assignment format
     if (req.method === "GET" && pathname.startsWith("/lab5/api/v1/sql/")) {
       return this.handleSelectFromPath(req, res, pathname);
     }
